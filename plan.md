@@ -217,6 +217,33 @@ PDF templates
 
 Short usage explanation (not full manual)
 
+9. Output mapping (final PDFs)
+
+The expected outputs after the full process (OCR → confirmation → order save) are:
+
+1) 注文書（兼 納品書 / 請求内訳明細書 / 受領書）
+   - Combined order/delivery/invoice detail sheet.
+   - Per-line list with product name, quantity, unit price, amount, and barcode blocks.
+
+2) 現品票（Packing Slip）
+   - One slip block per product line.
+   - Fields: 納品番号 / ユニットNo / 商品名 / 数量.
+
+3) 納品書（Delivery Note）
+   - Standard delivery note layout with item list and totals.
+
+4) 納品明細書（Delivery Detail）
+   - Detailed delivery list (dates, item codes, quantities, prices, totals).
+
+5) 請求書（Invoice）
+   - Standard invoice with header, item table, subtotal/tax/total.
+
+6) 請求明細書（Invoice Detail）
+   - Line-level invoice detail list attached to the invoice.
+
+7) 請求書（集計 / 締め用）
+   - Statement-style invoice with period totals and carryover.
+
 9. Backend implementation (Python + FastAPI)
 
 - FastAPI exposes `/api/*` endpoints for uploads, order lines, master data, pricing overrides, purchase records, and simulated PDF renders so the React/TS frontend can drive the in-scope workflow from confirmation to document generation.

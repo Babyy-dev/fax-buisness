@@ -2,6 +2,27 @@
   color: #0f172a;
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.login-card {
+  background: #ffffff;
+  padding: 2.5rem;
+  border-radius: 1.5rem;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.15);
+  max-width: 420px;
+  width: 100%;
+}
+
+.login-card h1 {
+  margin-top: 0;
+}
+
 .app-shell {
   max-width: 1200px;
   margin: 0 auto;

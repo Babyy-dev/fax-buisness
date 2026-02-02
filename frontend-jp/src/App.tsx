@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const TOKEN_KEY = 'fax_api_token'
 
 type ProcessStep = {
   title: string
@@ -89,16 +90,32 @@ const processSteps: ProcessStep[] = [
 
 const pdfDeliverables = [
   {
+    title: '注文書（兼 納品書 / 請求内訳明細書 / 受領書）',
+    detail: '商品明細と金額、バーコードを含む統合帳票です。',
+  },
+  {
     title: '現品票（Packing Slip）',
     detail: '納品番号・ユニット・製品名・数量を含むPDFを明細単位で生成します。',
   },
   {
     title: '納品書（Delivery Note）',
-    detail: '納品数量と現品票の対応をまとめたPDFを出力します。',
+    detail: '納品数量と金額をまとめた納品書PDFを出力します。',
+  },
+  {
+    title: '納品明細書（Delivery Detail）',
+    detail: '納品明細を一覧で出力します。',
   },
   {
     title: '請求書（Invoice）',
     detail: '単価と合計を含む顧客向け請求書を生成します。',
+  },
+  {
+    title: '請求明細書（Invoice Detail）',
+    detail: '請求明細を行単位で表示する添付書類です。',
+  },
+  {
+    title: '請求書（集計 / 締め）',
+    detail: '期間合計や繰越を含む締め用帳票です。',
   },
 ]
 
@@ -117,9 +134,13 @@ const nonFunctionalFocus = [
 ]
 
 const pdfDocumentTypes = [
-  { label: 'Packing slips', value: 'packing' },
-  { label: 'Delivery notes', value: 'delivery' },
-  { label: 'Invoices', value: 'invoice' },
+  { label: '注文書', value: 'order_summary' },
+  { label: '現品票', value: 'packing_slip' },
+  { label: '納品書', value: 'delivery_note' },
+  { label: '納品明細書', value: 'delivery_detail' },
+  { label: '請求書', value: 'invoice' },
+  { label: '請求明細書', value: 'invoice_detail' },
+  { label: '請求書（集計）', value: 'invoice_statement' },
 ]
 
 const parseJson = async <T,>(response: Response): Promise<T> => {
@@ -133,6 +154,11 @@ const parseJson = async <T,>(response: Response): Promise<T> => {
 }
 
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? '')
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [aliasList, setAliasList] = useState<ProductAliasEntry[]>([])
@@ -157,6 +183,14 @@ function App() {
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [fileInputKey, setFileInputKey] = useState(Date.now())
 
+  const scrollToOrderIntake = () => {
+    document.getElementById('order-intake')?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const scrollToPdfTemplates = () => {
+    document.getElementById('pdf-templates')?.scrollIntoView({ behavior: 'smooth' })
+  }
+
   const productNameMap = useMemo(() => {
     const map = new Map<number, string>()
     products.forEach((product) => map.set(product.id, product.internal_name))
@@ -167,10 +201,53 @@ function App() {
     (customer) => customer.id === selectedCustomerId,
   )
 
+  const authFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers)
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+    const response = await fetch(input, { ...init, headers })
+    if (response.status === 401) {
+      localStorage.removeItem(TOKEN_KEY)
+      setToken('')
+    }
+    return response
+  }
+
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginError(null)
+    setLoginLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      const data = await parseJson<{ token: string }>(response)
+      localStorage.setItem(TOKEN_KEY, data.token)
+      setToken(data.token)
+      setUsername('')
+      setPassword('')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'ログインに失敗しました。')
+    } finally {
+      setLoginLoading(false)
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem(TOKEN_KEY)
+    setToken('')
+  }
+
   useEffect(() => {
+    if (!token) {
+      return
+    }
     const fetchData = async () => {
       try {
-        const customerResponse = await fetch(`${API_BASE_URL}/api/customers`)
+        const customerResponse = await authFetch(`${API_BASE_URL}/api/customers`)
         const customerData = await parseJson<Customer[]>(customerResponse)
         setCustomers(customerData)
         setSelectedCustomerId((prevSelected) => {
@@ -184,7 +261,7 @@ function App() {
       }
 
       try {
-        const productResponse = await fetch(`${API_BASE_URL}/api/products`)
+        const productResponse = await authFetch(`${API_BASE_URL}/api/products`)
         const productData = await parseJson<Product[]>(productResponse)
         setProducts(productData)
       } catch (error) {
@@ -192,7 +269,7 @@ function App() {
       }
 
       try {
-        const aliasResponse = await fetch(`${API_BASE_URL}/api/products/aliases`)
+        const aliasResponse = await authFetch(`${API_BASE_URL}/api/products/aliases`)
         const aliasData = await parseJson<ProductAliasEntry[]>(aliasResponse)
         setAliasList(aliasData)
       } catch (error) {
@@ -201,7 +278,7 @@ function App() {
     }
 
     fetchData()
-  }, [])
+  }, [token])
 
   useEffect(() => {
     if (!selectedCustomerId) {
@@ -211,7 +288,7 @@ function App() {
 
     const fetchPricing = async () => {
       try {
-        const response = await fetch(
+        const response = await authFetch(
           `${API_BASE_URL}/api/customers/${selectedCustomerId}/pricing`,
         )
         const data = await parseJson<CustomerPricingEntry[]>(response)
@@ -228,7 +305,7 @@ function App() {
   const fetchOrderLines = async (id: number) => {
     setLoadingLines(true)
     try {
-      const response = await fetch(`${API_BASE_URL}/api/orders/${id}/lines`)
+      const response = await authFetch(`${API_BASE_URL}/api/orders/${id}/lines`)
       const data = await parseJson<ExtractedLine[]>(response)
       setOrderLines(data)
       setOrderMessage(`Order ${id} ready for confirmation.`)
@@ -261,7 +338,7 @@ function App() {
       const payload = new FormData()
       payload.append('file', file)
       payload.append('customer_id', String(selectedCustomerId))
-      const response = await fetch(`${API_BASE_URL}/api/orders/upload`, {
+      const response = await authFetch(`${API_BASE_URL}/api/orders/upload`, {
         method: 'POST',
         body: payload,
       })
@@ -289,7 +366,7 @@ function App() {
       return
     }
     try {
-      const response = await fetch(`${API_BASE_URL}/api/products/aliases`, {
+      const response = await authFetch(`${API_BASE_URL}/api/products/aliases`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -300,7 +377,7 @@ function App() {
       await parseJson<ProductAliasEntry>(response)
       setAliasName('')
       setAliasProductId('')
-      const refreshed = await fetch(`${API_BASE_URL}/api/products/aliases`)
+      const refreshed = await authFetch(`${API_BASE_URL}/api/products/aliases`)
       const aliasData = await parseJson<ProductAliasEntry[]>(refreshed)
       setAliasList(aliasData)
     } catch (error) {
@@ -325,7 +402,7 @@ function App() {
       return
     }
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `${API_BASE_URL}/api/customers/${selectedCustomerId}/pricing`,
         {
           method: 'POST',
@@ -340,7 +417,7 @@ function App() {
       setPricingProductId('')
       setPricingValue('')
       setPricingError(null)
-      const refreshed = await fetch(
+      const refreshed = await authFetch(
         `${API_BASE_URL}/api/customers/${selectedCustomerId}/pricing`,
       )
       const pricingData = await parseJson<CustomerPricingEntry[]>(refreshed)
@@ -363,7 +440,7 @@ function App() {
       return
     }
     try {
-      const response = await fetch(`${API_BASE_URL}/api/purchases`, {
+      const response = await authFetch(`${API_BASE_URL}/api/purchases`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -380,23 +457,64 @@ function App() {
     }
   }
 
-  const handlePdfRender = async (documentType: 'packing' | 'delivery' | 'invoice') => {
+  const handlePdfRender = async (
+    documentType:
+      | 'order_summary'
+      | 'packing_slip'
+      | 'delivery_note'
+      | 'delivery_detail'
+      | 'invoice'
+      | 'invoice_detail'
+      | 'invoice_statement',
+  ) => {
     if (!orderId) {
       setPdfMessage('まずオーダーをアップロードしてください。')
       return
     }
     try {
-      const response = await fetch(`${API_BASE_URL}/api/pdf/render`, {
+      const response = await authFetch(`${API_BASE_URL}/api/pdf/render`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order_id: orderId, document_type: documentType }),
       })
       const preview = await parseJson<{ preview_url: string; message: string }>(response)
-      setPdfPreviewUrl(preview.preview_url)
+      const url = preview.preview_url.startsWith('http')
+        ? preview.preview_url
+        : `${API_BASE_URL}${preview.preview_url}`
+      setPdfPreviewUrl(url)
       setPdfMessage(preview.message)
     } catch (error) {
       setPdfMessage(error instanceof Error ? error.message : 'プレビューの作成に失敗しました。')
     }
+  }
+
+  if (!token) {
+    return (
+      <div className="login-shell">
+        <div className="login-card">
+          <h1>ログイン</h1>
+          <p>管理者アカウントでログインしてください。</p>
+          <form onSubmit={handleLogin} className="panel-form">
+            <label>
+              ユーザー名
+              <input value={username} onChange={(event) => setUsername(event.target.value)} />
+            </label>
+            <label>
+              パスワード
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+            <button type="submit" disabled={loginLoading}>
+              {loginLoading ? 'ログイン中...' : 'ログイン'}
+            </button>
+            {loginError && <p className="status-message error">{loginError}</p>}
+          </form>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -408,9 +526,14 @@ function App() {
           FAX PDFをアップロードし、OCR結果を確認・補正して、現品票・納品書・請求書を安定的に出力します。
         </p>
         <div className="hero-actions">
-          <button type="button">注文受付を開始</button>
-          <button type="button" className="ghost">
+          <button type="button" onClick={scrollToOrderIntake}>
+            注文受付を開始
+          </button>
+          <button type="button" className="ghost" onClick={scrollToPdfTemplates}>
             PDFテンプレートを見る
+          </button>
+          <button type="button" className="ghost" onClick={handleLogout}>
+            ログアウト
           </button>
         </div>
         <div className="hero-meta">
@@ -440,7 +563,7 @@ function App() {
         ))}
       </section>
 
-      <section className="workflow-grid">
+      <section className="workflow-grid" id="order-intake">
         <article className="panel">
           <div className="panel-heading">
             <h2>注文受付</h2>
@@ -465,8 +588,13 @@ function App() {
               </select>
             </label>
             <label>
-              Fax PDF
-              <input key={fileInputKey} name="faxFile" type="file" accept=".pdf" />
+              FAXファイル（PDF/画像）
+              <input
+                key={fileInputKey}
+                name="faxFile"
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,image/*,application/pdf"
+              />
             </label>
             <div className="ocr-controls">
               <button type="submit" disabled={uploading}>
@@ -556,7 +684,7 @@ function App() {
         </article>
       </section>
 
-      <section className="panel-grid-two">
+      <section className="panel-grid-two" id="pdf-templates">
         <article className="panel">
           <div className="panel-heading">
             <h2>顧客と価格</h2>
@@ -671,7 +799,18 @@ function App() {
               <button
                 type="button"
                 key={document.value}
-                onClick={() => handlePdfRender(document.value as 'packing' | 'delivery' | 'invoice')}
+                onClick={() =>
+                  handlePdfRender(
+                    document.value as
+                      | 'order_summary'
+                      | 'packing_slip'
+                      | 'delivery_note'
+                      | 'delivery_detail'
+                      | 'invoice'
+                      | 'invoice_detail'
+                      | 'invoice_statement',
+                  )
+                }
               >
                 {document.label} を生成
               </button>

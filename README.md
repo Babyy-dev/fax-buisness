@@ -10,6 +10,10 @@ The React + TypeScript frontend is the user entry point for the fax-order automa
 - `npm run preview` serves the production bundle locally after running the build.
 - Set `VITE_API_BASE_URL` (see `frontend/.env.example`) to the FastAPI host before running dev or build so the UI can reach `/api/*`.
 
+## Localized frontends
+- `frontend/`: English-centric experience that we use for documentation, QA, and AWS builds.
+- `frontend-jp/`: Japanese-only copy with localized copywriting; build it exactly the same (install, set `VITE_API_BASE_URL`, then `npm run build`) when you need a Japanese-hosted SPA.
+
 ## AWS deployment guidance
 1. **S3 + CloudFront**  
    - `npm run build`, then sync `frontend/dist` to an S3 bucket configured for static website hosting (or use the bucket as the CloudFront origin).  
@@ -29,10 +33,16 @@ The React + TypeScript frontend is the user entry point for the fax-order automa
 - Run `python -m pip install -r backend/requirements.txt` before starting.
 - Launch the API with `uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000`; it serves the `/api/*` routes documented in `backend/app/main.py`.
 - Uploaded fax PDFs land in `backend/uploads/` and are linked to `SalesOrder` rows; extracted rows, product/customer masters, pricing overrides, and purchase records all persist in `backend/data/fax.db` via SQLModel (seed data is created automatically at startup).
+- The upload endpoint accepts PDFs and common image formats (`.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`) for FAX input.
+- Default login is `admin` / `admin123` (override with `FAX_ADMIN_USER` and `FAX_ADMIN_PASSWORD`).
+- If you change models, delete `backend/data/fax.db` to recreate the schema (SQLite has no migrations yet).
+- The backend can serve the frontend build directly: run `npm run build` in `frontend/` and then open `http://localhost:8000/` (assets are served from `/assets`).
 - Key endpoints:
   1. `POST /api/orders/upload` (multipart upload + optional `customer_id` form field) creates a staging order and sample OCR lines.
   2. `GET /api/orders/{order_id}/lines`, `POST /api/products/aliases`, `POST /api/customers/{customer_id}/pricing`, and `POST /api/purchases` cover the workflow from OCR confirmation through pricing/purchase capture.
-  3. `POST /api/pdf/render` simulates packing slip/delivery note/invoice generation and returns a preview URL that can point to S3/CloudFront storage.
+  3. `POST /api/orders/{order_id}/confirm` updates line pricing/aliases and locks the order.
+  4. `POST /api/pdf/render` generates one of the final PDFs and returns a local download URL (`/api/documents/{id}/download`).
+  - To use PostgreSQL (e.g., RDS) instead of SQLite, follow the `backend/POSTGRES.md` instructions and point `FAX_DB_URL` at your Postgres connection string (requires `psycopg[binary]` from the requirements file).
 
 ## Infrastructure notes
 - The current SQLite file (`backend/data/fax.db`) is ready to swap to PostgreSQL/RDS later; `backend/app/db.py` reads `FAX_DB_URL` from the environment so you can point it to `postgresql://...` without code changes.

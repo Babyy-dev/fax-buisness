@@ -39,10 +39,14 @@ class SalesOrder(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     customer_id: Optional[int] = Field(default=None, foreign_key="customer.id")
     status: str = Field(default="staging")
+    order_number: Optional[str] = None
+    delivery_number: Optional[str] = None
+    invoice_number: Optional[str] = None
     source_filename: Optional[str] = None
     stored_path: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    confirmed_at: Optional[datetime] = None
 
 
 class OrderLine(SQLModel, table=True):
@@ -53,6 +57,11 @@ class OrderLine(SQLModel, table=True):
     extracted_text: str
     normalized_name: str
     quantity: int
+    unit_price: float = Field(default=0.0)
+    line_total: float = Field(default=0.0)
+    delivery_number: Optional[str] = None
+    unit_number: Optional[str] = None
+    notes: Optional[str] = None
     status: str = Field(default="needs-review")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -63,3 +72,11 @@ class PurchaseRecord(SQLModel, table=True):
     purchase_price: float
     recorded_at: datetime = Field(default_factory=datetime.utcnow)
     note: Optional[str] = None
+
+
+class Document(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="salesorder.id")
+    document_type: str
+    file_path: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
