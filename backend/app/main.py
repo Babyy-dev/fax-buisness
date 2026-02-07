@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, Hea
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlmodel import Session, select, delete
+from sqlmodel import Session, select
 
 from .db import BASE_DIR, engine, create_db_and_tables, get_session
 from .models import (
@@ -44,6 +44,7 @@ from .schemas import (
     SalesOrderRead,
     UploadResponse,
 )
+from .ocr_utils import OCRException, extract_order_data
 from .pdf_utils import generate_pdf
 
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -57,11 +58,7 @@ ADMIN_USER = os.getenv("FAX_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("FAX_ADMIN_PASSWORD", "admin123")
 ACTIVE_TOKENS: Dict[str, str] = {}
 
-ALIAS_SUGGESTIONS = [
-    {"product": "M8 Tapping Screw", "alias": "TAP-M8X20"},
-    {"product": "M6 Hex Nut", "alias": "HEX-M6"},
-    {"product": "Plastic Spacer 10mm", "alias": "SPC-PL-10"},
-]
+ALIAS_SUGGESTIONS: List[dict] = []
 
 app = FastAPI(
     title="Fax Order Automation API",
@@ -89,90 +86,9 @@ def require_token(authorization: Optional[str] = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def seed_defaults(session: Session) -> None:
-    """Seed the database with sample products and customers when the tables are empty."""
-    product_exists = session.exec(select(Product)).first()
-    if not product_exists:
-        session.add_all(
-            [
-                Product(internal_name="M3x8 Screw", base_price=16.5),
-                Product(internal_name="M5 Flange Bolt", base_price=60.1),
-                Product(internal_name="Wing Nut", base_price=31.0),
-            ]
-        )
-
-    customer_exists = session.exec(select(Customer)).first()
-    if not customer_exists:
-        session.add_all(
-            [
-                Customer(name="Osaka Trading"),
-                Customer(name="Kyoto Fasteners"),
-                Customer(name="Nagoya Assembly"),
-            ]
-        )
-
-    session.commit()
-
-
-def create_sample_lines(order_id: int, session: Session) -> None:
-    """Populate order lines with sample OCR data for frontend review."""
-    session.exec(delete(OrderLine).where(OrderLine.order_id == order_id))
-    session.commit()
-
-    sample_rows = [
-        {
-            "customer_name": "M3x8 Screw",
-            "extracted_text": "M3X8 スクリュー",
-            "normalized_name": "M3x8 Machine Screw",
-            "quantity": 150,
-            "status": "matched",
-        },
-        {
-            "customer_name": "M5 Flange Bolt",
-            "extracted_text": "M5 FLANGE BOLT",
-            "normalized_name": "M5 Flange Bolt",
-            "quantity": 40,
-            "status": "matched",
-        },
-        {
-            "customer_name": "Wing Nut",
-            "extracted_text": "ウイングナット",
-            "normalized_name": "Wing Nut",
-            "quantity": 20,
-            "status": "needs-review",
-        },
-    ]
-
-    products = session.exec(select(Product)).all()
-    product_ids = [product.id for product in products if product.id]
-    product_price_map = {product.id: product.base_price for product in products if product.id}
-
-    for index, row in enumerate(sample_rows):
-        product_id = product_ids[index % len(product_ids)] if product_ids else None
-        unit_price = product_price_map.get(product_id, 0.0) if product_id else 0.0
-        line_total = unit_price * row["quantity"]
-        session.add(
-            OrderLine(
-                order_id=order_id,
-                product_id=product_id,
-                customer_name=row["customer_name"],
-                extracted_text=row["extracted_text"],
-                normalized_name=row["normalized_name"],
-                quantity=row["quantity"],
-                unit_price=unit_price,
-                line_total=line_total,
-                status=row["status"],
-            )
-        )
-
-    session.commit()
-
-
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
-    with Session(engine) as session:
-        seed_defaults(session)
 
 
 @app.get("/api/health")
@@ -226,7 +142,96 @@ async def upload_order(
     session.commit()
     session.refresh(order)
 
-    create_sample_lines(order.id, session)
+    try:
+        extracted_lines, extracted_meta = extract_order_data(target_path)
+    except OCRException as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if extracted_meta:
+        if extracted_meta.get("order_number"):
+            order.order_number = extracted_meta["order_number"]
+        if extracted_meta.get("delivery_number"):
+            order.delivery_number = extracted_meta["delivery_number"]
+        if extracted_meta.get("invoice_number"):
+            order.invoice_number = extracted_meta["invoice_number"]
+        session.add(order)
+        session.commit()
+        session.refresh(order)
+
+    aliases = session.exec(select(ProductAlias)).all()
+    products = session.exec(select(Product)).all()
+    alias_map = {alias.alias_name.lower(): alias.product_id for alias in aliases}
+    product_name_map = {product.internal_name.lower(): product for product in products}
+
+    for row in extracted_lines:
+        extracted_text = (row.get("extracted_text") or "").strip()
+        if not extracted_text:
+            continue
+        normalized_name = extracted_text
+        product_id = None
+        status = "needs-review"
+        lower_text = extracted_text.lower()
+
+        for alias_name, alias_product_id in alias_map.items():
+            if alias_name and alias_name in lower_text:
+                product_id = alias_product_id
+                product = session.get(Product, product_id)
+                if product:
+                    normalized_name = product.internal_name
+                status = "matched"
+                break
+
+        if not product_id:
+            for product_name, product in product_name_map.items():
+                if product_name and product_name in lower_text:
+                    product_id = product.id
+                    normalized_name = product.internal_name
+                    status = "matched"
+                    break
+
+        unit_price = float(row.get("unit_price") or 0.0)
+        if product_id:
+            if customer_id:
+                pricing = session.exec(
+                    select(CustomerPricing).where(
+                        CustomerPricing.customer_id == customer_id,
+                        CustomerPricing.product_id == product_id,
+                    )
+                ).first()
+                if pricing:
+                    unit_price = unit_price or pricing.override_price
+            if unit_price == 0.0:
+                product = session.get(Product, product_id)
+                if product:
+                    unit_price = product.base_price
+
+        quantity = int(row.get("quantity") or 1)
+        line_total = float(row.get("line_total") or 0.0) or (unit_price * quantity)
+        notes: List[str] = []
+        if row.get("product_code"):
+            notes.append(f"品番:{row.get('product_code')}")
+        if row.get("unit"):
+            notes.append(f"単位:{row.get('unit')}")
+        notes_text = " / ".join(notes) if notes else None
+
+        session.add(
+            OrderLine(
+                order_id=order.id,
+                product_id=product_id,
+                customer_name=extracted_text,
+                extracted_text=extracted_text,
+                normalized_name=normalized_name,
+                quantity=quantity,
+                unit_price=unit_price,
+                line_total=line_total,
+                delivery_number=row.get("delivery_number") or order.delivery_number,
+                unit_number=row.get("unit_number"),
+                notes=notes_text,
+                status=status,
+            )
+        )
+
+    session.commit()
 
     return UploadResponse(
         order_id=order.id,
@@ -508,7 +513,6 @@ def list_documents(
 def download_document(
     document_id: int,
     session: Session = Depends(get_session),
-    _auth: None = Depends(require_token),
 ):
     document = session.get(Document, document_id)
     if not document:

@@ -217,6 +217,14 @@ PDF templates
 
 Short usage explanation (not full manual)
 
+8.1 Expected Output Data
+
+- Structured order data (order, items, quantities, prices)
+- Generated PDFs (item labels, delivery note, invoice)
+- Updated master data (product base price, customer-specific price)
+
+Note: These outputs are produced after the full workflow completes (upload â†’ OCR/confirm â†’ order save â†’ PDF generation).
+
 9. Output mapping (final PDFs)
 
 The expected outputs after the full process (OCR → confirmation → order save) are:
