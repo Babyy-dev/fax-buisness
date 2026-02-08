@@ -192,6 +192,17 @@ def _lines_from_blocks(blocks: List[dict]) -> List[Dict[str, Any]]:
     return lines
 
 
+def _collect_raw_text(blocks: List[dict]) -> str:
+    lines: List[str] = []
+    for block in blocks:
+        if block.get("BlockType") != "LINE":
+            continue
+        text = block.get("Text", "").strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
 def _fetch_textract_blocks_for_image(file_path: Path) -> List[dict]:
     client = _get_textract_client()
     with file_path.open("rb") as handle:
@@ -273,7 +284,7 @@ def _extract_metadata(blocks: List[dict]) -> Dict[str, str]:
     return meta
 
 
-def extract_order_data(file_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+def extract_order_data(file_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, str], str]:
     suffix = file_path.suffix.lower()
     if suffix in SUPPORTED_IMAGE_EXTS:
         blocks = _fetch_textract_blocks_for_image(file_path)
@@ -286,9 +297,10 @@ def extract_order_data(file_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str,
     table_lines = _lines_from_tables(tables)
     lines = table_lines if table_lines else _lines_from_blocks(blocks)
     meta = _extract_metadata(blocks)
-    return lines, meta
+    raw_text = _collect_raw_text(blocks)
+    return lines, meta, raw_text
 
 
 def extract_order_lines(file_path: Path) -> List[Dict[str, Any]]:
-    lines, _meta = extract_order_data(file_path)
+    lines, _meta, _raw_text = extract_order_data(file_path)
     return lines

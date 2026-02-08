@@ -80,3 +80,27 @@ class Document(SQLModel, table=True):
     document_type: str
     file_path: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OCRAudit(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="salesorder.id")
+    source_filename: Optional[str] = None
+    stored_path: Optional[str] = None
+    raw_text: Optional[str] = None
+    meta_json: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OCRAuditLine(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    audit_id: int = Field(foreign_key="ocraudit.id")
+    extracted_text: str
+    quantity: int = Field(default=1)
+    unit_price: float = Field(default=0.0)
+    line_total: float = Field(default=0.0)
+    product_code: Optional[str] = None
+    unit: Optional[str] = None
+    unit_number: Optional[str] = None
+    delivery_number: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)

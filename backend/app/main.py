@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict
+import json
 import uuid
 import secrets
 import os
@@ -17,6 +18,8 @@ from .models import (
     Customer,
     CustomerPricing,
     Document,
+    OCRAudit,
+    OCRAuditLine,
     OrderLine,
     Product,
     ProductAlias,
@@ -143,9 +146,20 @@ async def upload_order(
     session.refresh(order)
 
     try:
-        extracted_lines, extracted_meta = extract_order_data(target_path)
+        extracted_lines, extracted_meta, raw_text = extract_order_data(target_path)
     except OCRException as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    audit = OCRAudit(
+        order_id=order.id,
+        source_filename=original_name,
+        stored_path=str(target_path.relative_to(BASE_DIR)),
+        raw_text=raw_text,
+        meta_json=json.dumps(extracted_meta, ensure_ascii=False),
+    )
+    session.add(audit)
+    session.commit()
+    session.refresh(audit)
 
     if extracted_meta:
         if extracted_meta.get("order_number"):
@@ -228,6 +242,19 @@ async def upload_order(
                 unit_number=row.get("unit_number"),
                 notes=notes_text,
                 status=status,
+            )
+        )
+        session.add(
+            OCRAuditLine(
+                audit_id=audit.id,
+                extracted_text=extracted_text,
+                quantity=quantity,
+                unit_price=unit_price,
+                line_total=line_total,
+                product_code=row.get("product_code"),
+                unit=row.get("unit"),
+                unit_number=row.get("unit_number"),
+                delivery_number=row.get("delivery_number"),
             )
         )
 
