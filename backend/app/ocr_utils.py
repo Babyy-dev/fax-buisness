@@ -2,11 +2,13 @@ import os
 import re
 import time
 import uuid
+import io
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
+from PIL import Image, ImageFilter, ImageOps
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 SUPPORTED_PDF_EXTS = {".pdf"}
@@ -25,6 +27,17 @@ HEADER_ALIASES = {
 
 class OCRException(RuntimeError):
     pass
+
+
+JP_CHAR_RE = re.compile(r"[\u3040-\u30ff\u4e00-\u9fffA-Za-z0-9]")
+
+
+def _ocr_text_quality(text: str) -> float:
+    normalized = "".join((text or "").split())
+    if not normalized:
+        return 0.0
+    good = sum(1 for ch in normalized if JP_CHAR_RE.match(ch))
+    return good / max(1, len(normalized))
 
 
 def _get_region() -> str:
@@ -192,6 +205,13 @@ def _lines_from_blocks(blocks: List[dict]) -> List[Dict[str, Any]]:
     return lines
 
 
+def _extracted_lines_quality(lines: List[Dict[str, Any]]) -> float:
+    if not lines:
+        return 0.0
+    sample_text = "\n".join((line.get("extracted_text") or "") for line in lines[:50])
+    return _ocr_text_quality(sample_text)
+
+
 def _collect_raw_text(blocks: List[dict]) -> str:
     lines: List[str] = []
     for block in blocks:
@@ -203,15 +223,89 @@ def _collect_raw_text(blocks: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def _preprocess_image_bytes(file_path: Path) -> Optional[bytes]:
+    try:
+        with Image.open(file_path) as image:
+            image = ImageOps.exif_transpose(image)
+            image = image.convert("L")
+            image = ImageOps.autocontrast(image)
+            image = image.filter(ImageFilter.MedianFilter(size=3))
+            image = image.point(lambda p: 255 if p > 150 else 0)
+            out = io.BytesIO()
+            image.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:
+        return None
+
+
+def _analyze_blocks_score(blocks: List[dict]) -> float:
+    table_count = sum(1 for block in blocks if block.get("BlockType") == "TABLE")
+    cell_count = sum(1 for block in blocks if block.get("BlockType") == "CELL")
+    raw_text = _collect_raw_text(blocks)
+    text_quality = _ocr_text_quality(raw_text)
+    line_count = sum(1 for block in blocks if block.get("BlockType") == "LINE")
+    return (table_count * 40.0) + (cell_count * 1.5) + (line_count * 0.4) + (text_quality * 20.0)
+
+
+def _detect_blocks_score(blocks: List[dict]) -> float:
+    raw_text = _collect_raw_text(blocks)
+    text_quality = _ocr_text_quality(raw_text)
+    line_count = sum(1 for block in blocks if block.get("BlockType") == "LINE")
+    return (line_count * 0.8) + (text_quality * 30.0)
+
+
+def _analyze_document_bytes(client, payload: bytes) -> List[dict]:
+    response = client.analyze_document(Document={"Bytes": payload}, FeatureTypes=["TABLES"])
+    return response.get("Blocks", [])
+
+
+def _detect_document_text_bytes(client, payload: bytes) -> List[dict]:
+    response = client.detect_document_text(Document={"Bytes": payload})
+    return response.get("Blocks", [])
+
+
 def _fetch_textract_blocks_for_image(file_path: Path) -> List[dict]:
     client = _get_textract_client()
     with file_path.open("rb") as handle:
-        payload = handle.read()
+        original_payload = handle.read()
+    preprocessed_payload = _preprocess_image_bytes(file_path)
+    payload_candidates: List[bytes] = [original_payload]
+    if preprocessed_payload:
+        payload_candidates.append(preprocessed_payload)
+
+    best_analyze_blocks: List[dict] = []
+    best_analyze_score = -1.0
     try:
-        response = client.analyze_document(Document={"Bytes": payload}, FeatureTypes=["TABLES"])
+        for payload in payload_candidates:
+            blocks = _analyze_document_bytes(client, payload)
+            score = _analyze_blocks_score(blocks)
+            if score > best_analyze_score:
+                best_analyze_blocks = blocks
+                best_analyze_score = score
     except (BotoCoreError, ClientError) as exc:
         raise OCRException(f"Textract analyze_document failed: {exc}") from exc
-    return response.get("Blocks", [])
+
+    analyze_quality = _ocr_text_quality(_collect_raw_text(best_analyze_blocks))
+    analyze_line_count = sum(1 for block in best_analyze_blocks if block.get("BlockType") == "LINE")
+    if analyze_quality >= 0.55 and analyze_line_count >= 3:
+        return best_analyze_blocks
+
+    # Fallback path for poor JP extraction quality.
+    best_detect_blocks: List[dict] = []
+    best_detect_score = -1.0
+    try:
+        for payload in payload_candidates:
+            blocks = _detect_document_text_bytes(client, payload)
+            score = _detect_blocks_score(blocks)
+            if score > best_detect_score:
+                best_detect_blocks = blocks
+                best_detect_score = score
+    except (BotoCoreError, ClientError):
+        return best_analyze_blocks
+
+    if best_detect_blocks and best_detect_score > (best_analyze_score * 0.65):
+        return best_detect_blocks
+    return best_analyze_blocks
 
 
 def _fetch_textract_blocks_for_pdf(file_path: Path) -> List[dict]:
@@ -295,7 +389,13 @@ def extract_order_data(file_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str,
 
     tables = _extract_tables(blocks)
     table_lines = _lines_from_tables(tables)
-    lines = table_lines if table_lines else _lines_from_blocks(blocks)
+    block_lines = _lines_from_blocks(blocks)
+    if table_lines:
+        table_quality = _extracted_lines_quality(table_lines)
+        block_quality = _extracted_lines_quality(block_lines)
+        lines = table_lines if table_quality >= block_quality else block_lines
+    else:
+        lines = block_lines
     meta = _extract_metadata(blocks)
     raw_text = _collect_raw_text(blocks)
     return lines, meta, raw_text

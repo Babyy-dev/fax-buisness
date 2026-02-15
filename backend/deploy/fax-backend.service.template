@@ -1,0 +1,36 @@
+[Unit]
+Description=Fax Backend API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__APP_DIR__/backend
+EnvironmentFile=__APP_DIR__/backend/.env
+ExecStart=__APP_DIR__/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGINT
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=__APP_DIR__/backend/data __APP_DIR__/backend/uploads __APP_DIR__/backend/generated __APP_DIR__/backend/logs
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Fax backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=fax-backup.service
+
+[Install]
+WantedBy=timers.target
+

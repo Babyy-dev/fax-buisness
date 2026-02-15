@@ -22,12 +22,33 @@ Contents
 - PDF generation: ReportLab, Code128 barcodes, background templates
 - Frontend: React + TypeScript (served by backend if desired)
 
+Scope summary
+When a customer sends an order by FAX, the document is saved as a PDF or image, then read by the system to extract product names, quantities, and customer details. Product names are matched to internal masters even when they differ in wording. Prices are applied automatically based on standard prices or the last customer-specific price. The order is saved as a sales record, and the system generates item labels, delivery notes, and invoices without manual re-entry. Over time, purchases and sales improve price accuracy and matching.
+
+Post-OCR Goals
+- Persist structured sales data (`salesorder`, `orderline`) from OCR output.
+- Auto-apply pricing from customer override or product base price.
+- Persist OCR audit artifacts (`ocraudit`, `ocrauditline`) for traceability.
+- Generate final business PDFs from confirmed order data.
+- Improve future matching and pricing accuracy through alias/pricing/purchase history.
+
 ---
 
 2) Local setup
 Prereqs:
 - Python 3.10+
 - Node 18+
+
+Environment (optional, recommended):
+- Copy `backend/.env.example` to `backend/.env`
+- Fill in AWS keys, Textract bucket, and any overrides
+Security settings:
+- Use `FAX_ADMIN_PASSWORD_HASH` instead of plain password for production.
+- Set `CORS_ALLOW_ORIGINS` to your frontend domain(s), comma-separated.
+- Token expiry controlled by `FAX_TOKEN_TTL_MINUTES`.
+
+Generate a password hash (PowerShell):
+  python -c "import os,base64,hashlib; password='your-strong-password'; salt=os.urandom(16); iterations=200000; dk=hashlib.pbkdf2_hmac('sha256', password.encode(), salt, iterations); print(f'pbkdf2${iterations}$'+base64.b64encode(salt).decode()+'$'+base64.b64encode(dk).decode())"
 
 Install backend deps:
   cd backend
@@ -148,18 +169,37 @@ Verify DB:
 1) Launch EC2 (Ubuntu 22.04)
 2) Install deps:
    sudo apt update
-   sudo apt install -y python3 python3-venv python3-pip git npm
+   sudo apt install -y python3 python3-venv python3-pip git npm sqlite3
 3) Clone repo
 4) Build frontend:
    cd frontend && npm install && npm run build
 5) Setup backend:
    cd backend && python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
-6) Run backend:
+6) Configure backend env:
+   cp backend/.env.example backend/.env
+   # fill AWS/Textract/admin/CORS values in backend/.env
+7) Run backend:
    uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-Optional systemd service:
-- Use a service to keep uvicorn running after reboot.
+Production hardening (systemd + restricted runtime):
+- Deploy templates and scripts from `backend/deploy`.
+- Install services:
+  sudo bash /home/ubuntu/<repo>/backend/deploy/install-systemd.sh --app-dir /home/ubuntu/<repo> --user ubuntu
+- Check status:
+  sudo systemctl status fax-backend
+  sudo systemctl status fax-backup.timer
+
+SQLite backups (daily + manual):
+- Daily timer: `fax-backup.timer` runs `backup.sh` and stores archives in `/var/backups/fax`.
+- Customize retention/path in:
+  /home/ubuntu/<repo>/backend/deploy/backup.env
+- Manual backup:
+  bash /home/ubuntu/<repo>/backend/deploy/backup.sh
+- Manual restore (stop service first):
+  sudo systemctl stop fax-backend
+  bash /home/ubuntu/<repo>/backend/deploy/restore.sh /var/backups/fax/fax-backup-YYYYMMDDTHHMMSSZ.tar.gz /home/ubuntu/<repo>
+  sudo systemctl start fax-backend
 
 ---
 
@@ -168,4 +208,3 @@ Optional systemd service:
 - "Failed to fetch" from Vercel: HTTPS frontend cannot call HTTP backend.
 - OCR errors: verify AWS region, IAM permissions, and S3 bucket.
 - Garbled PDF text: install a JP font and set FAX_JP_FONT_PATH.
-

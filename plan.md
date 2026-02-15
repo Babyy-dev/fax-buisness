@@ -254,10 +254,10 @@ The expected outputs after the full process (OCR → confirmation → order save
 
 9. Backend implementation (Python + FastAPI)
 
-- FastAPI exposes `/api/*` endpoints for uploads, order lines, master data, pricing overrides, purchase records, and simulated PDF renders so the React/TS frontend can drive the in-scope workflow from confirmation to document generation.
-- SQLModel maps to SQLite (`backend/data/fax.db` by default) with models for products, aliases, customers, pricing, sales orders, order lines, and purchase records; migrations later swap to PostgreSQL/RDS via the `FAX_DB_URL` env var without code changes.
-- Uploads land in `backend/uploads/`, each creating a staging `SalesOrder` plus seeded OCR lines for the UI; alias/customer views return lightweight data for JavaScript tables.
-- Simple seeding keeps sample customers/products for Japanese desktop users, and helper endpoints (alias suggestions, health check) keep the admin flow discoverable.
+- FastAPI exposes `/api/*` endpoints for upload, OCR extraction, order confirmation, masters, pricing, purchase records, and document generation so the frontend can run the full workflow.
+- SQLModel maps to SQLite (`backend/data/fax.db` by default) with models for products, aliases, customers, pricing, sales orders, order lines, purchase records, generated documents, and OCR audit tables.
+- Uploads are stored in `backend/uploads/`, processed by AWS Textract, then persisted as real order lines (no seeded/sample order rows).
+- OCR traceability is persisted in `ocraudit` and `ocrauditline` so raw text and parsed fields are retained for debugging and reprocessing.
 
 10. AWS deployment guidance
 

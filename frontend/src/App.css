@@ -153,6 +153,17 @@
   margin: 0;
 }
 
+.process-card button {
+  margin-top: 0.5rem;
+  border: 1px solid #1d4ed8;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .workflow-grid {
   display: grid;
   gap: 1.25rem;
@@ -214,6 +225,52 @@
   color: #0f172a;
 }
 
+.generated-docs {
+  border: 1px solid #dbeafe;
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+  background: #f8fbff;
+}
+
+.generated-docs h4 {
+  margin: 0 0 0.7rem;
+}
+
+.generated-doc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.generated-doc-list button {
+  border: 1px solid #0f172a;
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.step-actions {
+  margin-top: 0.5rem;
+}
+
+.step-actions .ghost {
+  border: 1px solid #0f172a;
+  background: transparent;
+  color: #0f172a;
+  border-radius: 0.85rem;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.step-actions .ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .table-grid {
   display: flex;
   flex-direction: column;
@@ -260,6 +317,52 @@
 .status-needs-review {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.ocr-line-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+}
+
+.ocr-line-card {
+  border: 1px solid #dbeafe;
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+  background: #f8fbff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ocr-line-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ocr-line-head strong {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.ocr-line-fields {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.ocr-line-fields small {
+  color: #64748b;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.ocr-line-fields p {
+  margin: 0;
+  color: #0f172a;
+  word-break: break-word;
 }
 
 .panel-form {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Fax SQLite Backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+EnvironmentFile=-__APP_DIR__/backend/deploy/backup.env
+ExecStart=__APP_DIR__/backend/deploy/backup.sh
+

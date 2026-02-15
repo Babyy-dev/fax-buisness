@@ -5,6 +5,13 @@ import './App.css'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const TOKEN_KEY = 'fax_api_token'
 
+const getInitialToken = () => {
+  // Clear any legacy persisted token and always start a fresh login session.
+  localStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  return ''
+}
+
 type ProcessStep = {
   title: string
   description: string
@@ -153,8 +160,21 @@ const parseJson = async <T,>(response: Response): Promise<T> => {
   return data as T
 }
 
+const readDownloadFilename = (response: Response, fallbackName: string) => {
+  const contentDisposition = response.headers.get('Content-Disposition') ?? ''
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1])
+  }
+  const simpleMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i)
+  if (simpleMatch?.[1]) {
+    return simpleMatch[1]
+  }
+  return fallbackName
+}
+
 function App() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? '')
+  const [token, setToken] = useState(getInitialToken)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loginLoading, setLoginLoading] = useState(false)
   const [username, setUsername] = useState('')
@@ -180,7 +200,6 @@ function App() {
   const [pricingError, setPricingError] = useState<string | null>(null)
   const [purchaseMessage, setPurchaseMessage] = useState<string | null>(null)
   const [pdfMessage, setPdfMessage] = useState<string | null>(null)
-  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [fileInputKey, setFileInputKey] = useState(Date.now())
 
   const scrollToOrderIntake = () => {
@@ -208,7 +227,6 @@ function App() {
     }
     const response = await fetch(input, { ...init, headers })
     if (response.status === 401) {
-      localStorage.removeItem(TOKEN_KEY)
       setToken('')
     }
     return response
@@ -225,7 +243,6 @@ function App() {
         body: JSON.stringify({ username, password }),
       })
       const data = await parseJson<{ token: string }>(response)
-      localStorage.setItem(TOKEN_KEY, data.token)
       setToken(data.token)
       setUsername('')
       setPassword('')
@@ -237,7 +254,6 @@ function App() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem(TOKEN_KEY)
     setToken('')
   }
 
@@ -348,7 +364,6 @@ function App() {
       setOrderId(result.order_id)
       await fetchOrderLines(result.order_id)
       setPdfMessage(null)
-      setPdfPreviewUrl(null)
       setOrderMessage('OCRプレビューが準備できました。確認して保存してください。')
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'アップロードに失敗しました。')
@@ -481,8 +496,21 @@ function App() {
       const url = preview.preview_url.startsWith('http')
         ? preview.preview_url
         : `${API_BASE_URL}${preview.preview_url}`
-      setPdfPreviewUrl(url)
-      setPdfMessage(preview.message)
+      const downloadResponse = await authFetch(url)
+      if (!downloadResponse.ok) {
+        const errorText = await downloadResponse.text()
+        throw new Error(errorText || 'Failed to download generated PDF.')
+      }
+      const blob = await downloadResponse.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = readDownloadFilename(downloadResponse, `${documentType}-${orderId}.pdf`)
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(objectUrl)
+      setPdfMessage(`${preview.message} Download started.`)
     } catch (error) {
       setPdfMessage(error instanceof Error ? error.message : 'プレビューの作成に失敗しました。')
     }
@@ -520,7 +548,7 @@ function App() {
   return (
     <div className="app-shell">
       <header className="hero">
-        <span className="hero-tag">FAX注文自動化MVP</span>
+        <span className="hero-tag">FAX注文自動化</span>
         <h1>FAX注文を確認済みのデジタルワークフローへ</h1>
         <p className="hero-subtitle">
           FAX PDFをアップロードし、OCR結果を確認・補正して、現品票・納品書・請求書を安定的に出力します。
@@ -817,17 +845,7 @@ function App() {
             ))}
           </div>
           {pdfMessage && (
-            <p className="status-message">
-              {pdfMessage}
-              {pdfPreviewUrl && (
-                <>
-                  {' '}
-                  <a href={pdfPreviewUrl} target="_blank" rel="noreferrer">
-                    Preview URL
-                  </a>
-                </>
-              )}
-            </p>
+            <p className="status-message">{pdfMessage}</p>
           )}
         </article>
       </section>
